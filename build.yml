@@ -1,0 +1,72 @@
+name: EDITH APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: edith-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Projeyi hazirla (ZIP varsa otomatik ac)
+        run: |
+          set -e
+          if [ -f settings.gradle.kts ]; then
+            PROJ="$PWD"
+          else
+            ZIP=$(find . -maxdepth 2 -iname '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -z "$ZIP" ]; then echo "Depoda ZIP bulunamadi"; exit 1; fi
+            mkdir -p "$RUNNER_TEMP/src"
+            unzip -q -o "$ZIP" -d "$RUNNER_TEMP/src"
+            S=$(find "$RUNNER_TEMP/src" -maxdepth 3 -name settings.gradle.kts | head -n 1)
+            if [ -z "$S" ]; then echo "ZIP icinde settings.gradle.kts yok"; exit 1; fi
+            PROJ=$(dirname "$S")
+          fi
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          echo "Proje: $PROJ"
+
+      - name: El modelini indir
+        run: |
+          mkdir -p "$PROJ/app/src/main/assets"
+          if [ ! -s "$PROJ/app/src/main/assets/hand_landmarker.task" ]; then
+            curl -fL --retry 3 -o "$PROJ/app/src/main/assets/hand_landmarker.task" \
+              https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+          fi
+          ls -l "$PROJ/app/src/main/assets"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: APK derle
+        run: |
+          cd "$PROJ"
+          gradle assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/EDITH.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EDITH-APK
+          path: EDITH.apk
+
+      - name: Release olustur (telefondan indirmek icin)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: edith-${{ github.run_number }}
+          name: EDITH ${{ github.run_number }}
+          files: EDITH.apk
+          make_latest: true
